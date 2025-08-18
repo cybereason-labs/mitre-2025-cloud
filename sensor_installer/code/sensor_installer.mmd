@@ -1,0 +1,27 @@
+flowchart TD;
+    Start["Start"] --> DescribeInstances["Describe all running
+    instances and return
+    tags to each instance
+    ID"]
+    DescribeInstances --> SsmAccess["Read 'ssm_access', 'sensor_installed' and  'platform_details' instance tag"]
+    SsmAccess --> InstanceSsmAccess{"Instance have SSM access"}
+    InstanceSsmAccess -- Yes --> SensorInstalled{"Instance have
+    a sensor already
+    installer"}
+    InstanceSsmAccess -- No --> End
+    SensorInstalled -- Yes --> End
+    SensorInstalled -- No --> InstallSensor["Installing sensor and wait for response"]
+    InstallSensor --> InstallSensorSuccess{"Sensor installed
+    successfully?"}
+    InstallSensorSuccess -- Yes --> InstanceChangeSensorTag["Change the 'sensor_installed' tag to 'True'"]
+    InstanceChangeSensorTag --> ReleaseIsolation["Release the isolation from the instance"]
+    ReleaseIsolation --> ReleaseIsolationSuccess{"Successfully released
+    the isolation
+    of the instance?"}
+    ReleaseIsolationSuccess -- Yes --> RemoveTagContent["Removing the content
+    of the NSG and instance
+    profile and setting
+    'isolated' to 'False'"]
+    RemoveTagContent --> End
+    InstallSensorSuccess -- No --> SensorRaisingError["Raising an error"] --> End
+    ReleaseIsolationSuccess -- No --> ReleaseRaisingError["Raising an error"] --> End

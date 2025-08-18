@@ -1,0 +1,20 @@
+flowchart TD;
+    Start["Start"] --> DescribeInstances["Describe all running
+    instances and return
+    tags to each instance
+    ID"]
+    DescribeInstances --> Get["Get all instances that
+    are accessible via SSM"]
+    Get --> Instance{"Instance was last
+    modified by the
+    instance pipeline"
+    }
+    Instance -- Yes --> InstanceVisible{"Instance is
+    visible by SSM"}
+    InstanceVisible --> SsmAccessIsFalse{"Instance Is
+    listed without
+    SSM access"}
+    SsmAccessIsFalse --> MoveSsmToTrue["Change instance 'ssm_access' tag to True"]
+    MoveSsmToTrue --> End
+    Instance -- No --> NoChange["No changes required for instance"]
+    NoChange --> End
