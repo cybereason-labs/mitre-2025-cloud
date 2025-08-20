@@ -171,7 +171,6 @@ class SensorInstaller:
                             # "Restart-Computer -Force"
                         ]
 
-
                     if len(commands) > 0 and document_name is not None:
                         cmd_id = self.send_ssm_command(instance_id, commands, document_name)
                         result = self.wait_for_command_completion(instance_id, cmd_id, timeout=self.timeout, interval=self.interval)
