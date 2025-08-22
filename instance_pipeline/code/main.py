@@ -21,10 +21,10 @@ class InstancePipeline:
             approved_images = [image.strip() for image in self.approved_images.split(",")]
             if cur_image_id not in approved_images:
                 self.ec2_client.stop_instances(InstanceIds=[self.instance_id], Force=True)
-                print(f"WARNING :: Instance {self.instance_id} was using unapproved image and was stopped")
-                exit(0)
+                return False
             else:
                 print(f" INFO   :: Instance '{self.instance_id}' is using an approved image")
+                return True
 
     def isolating_instance_role_permissions(self):
         associations = self.ec2_client.describe_iam_instance_profile_associations(
@@ -268,15 +268,17 @@ class InstancePipeline:
         current_instance = self.describe_instance()
 
         # STEP 1 - Checking if the AMI was pre-approved and terminating in the case it wasn't
-        self.check_approved_ami(current_instance)
+        ami_is_approved = self.check_approved_ami(current_instance)
 
-        # STEP 2 - Isolation to all new instances
-        self.temporary_isolate_instance(current_instance)
+        if ami_is_approved:
+            # STEP 2 - Isolation to all new instances
+            self.temporary_isolate_instance(current_instance)
 
-        # STEP 3 (if not isolated) - add required SSM permissions
-        refreshed_current_instance = self.describe_instance()
-        self.add_required_permissions(refreshed_current_instance)
-
+            # STEP 3 (if not isolated) - add required SSM permissions
+            refreshed_current_instance = self.describe_instance()
+            self.add_required_permissions(refreshed_current_instance)
+        else:
+            print(f"WARNING :: Instance {self.instance_id} was using unapproved image and was stopped")
 
 def lambda_handler(event, context):
     region = event['region']
@@ -284,6 +286,8 @@ def lambda_handler(event, context):
     print(f" INFO   :: Detected a new running instance - '{instance_id}'")
     InstancePipeline(event, region, instance_id).main()
 
+# For testing -->
+#
 # if __name__ == "__main__":
 #     os.environ["S3_BUCKET_NAME"] = "arn:aws:s3:::test"
 #     os.environ["APPROVED_IMAGES"] = "ami-084a7d336e816906b, ami-07041441b708acbd6, ami-Oc9fb5d338f1eec43"

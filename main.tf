@@ -20,7 +20,6 @@ provider "aws" {
 }
 variable "approved_images" {
   type    = string
-  default = ""
 }
 
 locals {
@@ -70,4 +69,8 @@ resource "random_string" "this" {
   length  = 8
   special = false
   upper   = false
+}
+
+output "S3-Bucket-Name" {
+  value = aws_s3_bucket.this.bucket
 }
