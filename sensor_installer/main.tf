@@ -15,6 +15,13 @@ variable "retry_wait_interval" {
   type    = number
   default = 5
 }
+variable "scenario" {
+  type = string
+  validation {
+    condition = var.scenario == "detect" || var.scenario == "protect"
+    error_message = "Scenario can only be 'detect' or 'protect'."
+  }
+}
 
 data "aws_iam_policy" "AWSLambdaBasicExecutionRole" {
   arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
@@ -51,6 +58,7 @@ resource "aws_lambda_function" "this" {
       S3_BUCKET_NAME      = var.s3_bucket_name
       RETRY_TIMEOUT       = var.retry_timeout
       RETRY_WAIT_INTERVAL = var.retry_wait_interval
+      SCENARIO            = var.scenario
     }
   }
 }
