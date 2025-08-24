@@ -19,12 +19,18 @@ provider "aws" {
   profile = "exam"
 }
 variable "approved_images" {
+  type = string
+}
+variable "scenario" {
   type    = string
+  default = "detect"
 }
 
 locals {
   installation_files = [
-    "CybereasonSensor64.exe",
+    "CybereasonSensor-x86_64-${var.scenario}.exe",
+    "CybereasonSensor-x86_64-${var.scenario}.deb",
+    "CybereasonSensor-arm64-${var.scenario}.deb",
     "dlls.zip",
     "DeveloperCertificates.zip"
   ]
@@ -32,22 +38,23 @@ locals {
 
 module "instance_pipline" {
   depends_on = [null_resource.this]
-  source          = "./instance_pipeline"
+  source          = "../instance_pipeline"
   name            = "instance_pipeline"
   s3_bucket_name  = aws_s3_bucket.this.bucket
   approved_images = var.approved_images
 }
 module "ssm_accessibility" {
   depends_on = [null_resource.this]
-  source = "./ssm_accessibility"
+  source = "../ssm_accessibility"
   name   = "ssm_accessibility_checker"
 }
 module "sensor_installer" {
   depends_on = [null_resource.this]
-  source         = "./sensor_installer"
+  source         = "../sensor_installer"
   name           = "sensor_installer"
   region         = "us-east-1"
   s3_bucket_name = aws_s3_bucket.this.bucket
+  scenario       = var.scenario
 }
 
 resource "aws_s3_bucket" "this" {
