@@ -15,6 +15,7 @@ class SensorInstaller:
         self.interval = int(os.getenv("RETRY_WAIT_INTERVAL", 5))
         debug = os.getenv("DEBUG")
         self.debug = True if debug == "True" else False
+        self.current_scenario = os.getenv("SCENARIO")
 
     @staticmethod
     def get_tag_value(tag_name, tags):
@@ -123,9 +124,50 @@ class SensorInstaller:
             print(f"ERROR :: Failed to bring instance profile back - {e}")
 
         if sg_rollback and ip_rollback:
-            return True
+            self.ec2_client.create_tags(
+                Resources=[instance_id],
+                Tags=[
+                    {'Key': "security_groups", 'Value': "None"},
+                    {'Key': "previous_instance_profile", 'Value': "None"},
+                    {'Key': "ssm_access", 'Value': "N\\A"},
+                    {'Key': "isolated", 'Value': "False"},
+                    {'Key': "last_edited_by", 'Value': "SensorInstallation"}
+                ]
+            )
         else:
-            return False
+            print(f"ERROR :: Failed to release '{instance_id}' from isolation")
+
+    def run_command_for_instances(self, platform, instance_ids, instance_tags,sensor_commands):
+        start_time = time()
+        command_id = self.send_ssm_command(instance_ids, sensor_commands, "AWS-RunPowerShellScript" if platform == "windows" else "AWS-RunPowerShellScript", platform)
+        results = self.wait_for_command(command_id, instance_ids)
+        end_time = time()
+        elapsed_seconds = int(end_time - start_time)
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        print(f"INFO :: {platform.title()} command ran for {minutes}:{seconds:02d}")
+
+        for result in results:
+            cur_instance_id = result["instance_id"]
+            cur_status = result["status"]
+
+            if cur_status == "Success":
+                if self.debug:
+                    print(f"WARNING :: Debug is ON - Not attempting to release '{cur_instance_id}' isolation")
+                else:
+                    print(f"INFO :: Sensor successfully installed on '{cur_instance_id}'")
+                    self.ec2_client.create_tags(
+                        Resources=[cur_instance_id],
+                        Tags=[
+                            {'Key': "sensor_installed", 'Value': "True"},
+                            {'Key': "last_edited_by", 'Value': "SensorInstallation"}
+                        ]
+                    )
+                    tags = instance_tags[cur_instance_id]
+                    security_groups = self.get_tag_value("security_groups", tags)
+                    instance_profile = self.get_tag_value("previous_instance_profile", tags)
+                    self.release_isolation(cur_instance_id, security_groups, instance_profile)
+            else:
+                print(f"INFO :: Sensor failed to install on '{cur_instance_id}'")
 
     def main(self):
         current_instances = self.get_current_running_instances()
@@ -133,7 +175,7 @@ class SensorInstaller:
             current_windows_instance_ids = []
             current_windows_instance_tags = {}
 
-            current_linux_instance_id = []
+            current_linux_instance_ids = {"x86_64": [], "arm64": []}
             current_linux_instance_tags = {}
 
             for instance in current_instances:
@@ -143,17 +185,22 @@ class SensorInstaller:
                 sensor_installed = self.get_tag_value("sensor_installed", tags)
                 isolated = self.get_tag_value("isolated", tags)
                 platform = self.get_tag_value("platform_details", tags).lower().strip()
+                architecture = self.get_tag_value("architecture", tags)
 
                 if ssm_access == "True" and sensor_installed == "False" and platform == "windows" and isolated == "True":
                     current_windows_instance_ids.append(instance_id)
                     current_windows_instance_tags.update({instance_id: tags})
                 elif ssm_access == "True" and sensor_installed == "False" and platform == "linux" and isolated == "True":
-                    current_linux_instance_id.append(instance_id)
-                    current_linux_instance_tags.update({instance_id: tags})
+                    if architecture == "x86_64":
+                        current_linux_instance_ids["x86_64"].append(instance_id)
+                        current_linux_instance_tags.update({instance_id: tags})
+                    elif architecture == "arm64":
+                        current_linux_instance_ids["arm64"].append(instance_id)
+                        current_linux_instance_tags.update({instance_id: tags})
 
             if len(current_windows_instance_ids) > 0:
-                document_name = "AWS-RunPowerShellScript"
-                sensor_commands = [
+                sensor_binary_name = f"CybereasonSensor-x86_64-{self.current_scenario}.exe"
+                windows_sensor_commands = [
                     "New-Item -Path \"C:\\tools\" -ItemType Directory",
 
                     # Installing AWS CLI Tool
@@ -173,8 +220,8 @@ class SensorInstaller:
                     "Start-Process -FilePath \"C:\\tools\\DeveloperCertificates\\InstallCert.bat\" -Wait -NoNewWindow;",
 
                     # Installing Sensor
-                    f"& \"C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe\" s3 cp s3://{self.s3_bucket_name}/CybereasonSensor64.exe C:\\tools\\;",
-                    "Start-Process -FilePath \"C:\\tools\\CybereasonSensor64.exe\" -ArgumentList \"/install\",\"/quiet\",\"/norestart\" -Wait -NoNewWindow;",
+                    f"& \"C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe\" s3 cp s3://{self.s3_bucket_name}/{sensor_binary_name} C:\\tools\\;",
+                    f"Start-Process -FilePath \"C:\\tools\\{sensor_binary_name}\" -ArgumentList \"/install\",\"/quiet\",\"/norestart\" -Wait -NoNewWindow;",
 
                     # Installing DLLs
                     f"& \"C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe\" s3 cp s3://{self.s3_bucket_name}/dlls.zip C:\\tools\\;",
@@ -186,61 +233,29 @@ class SensorInstaller:
                     "Start-Sleep -Seconds 60",
                     "if ((Get-Service -Name \"CybereasonActiveProbe\" -ErrorAction SilentlyContinue).Status -eq 'Running') { exit 0 } else { exit 1 }"
                 ]
-
-                windows_start_time = time()
-                command_id = self.send_ssm_command(current_windows_instance_ids, sensor_commands, document_name,
-                                                   "windows")
-                results = self.wait_for_command(command_id, current_windows_instance_ids)
-                windows_end_time = time()
-                elapsed_seconds = int(windows_end_time - windows_start_time)
-                minutes, seconds = divmod(elapsed_seconds, 60)
-                print(f"INFO :: Windows command ran for {minutes}:{seconds:02d}")
-
-                for result in results:
-                    cur_instance_id = result["instance_id"]
-                    cur_status = result["status"]
-
-                    if cur_status == "Success":
-                        if self.debug:
-                            print(f"WARNING :: Debug is ON - Not attempting to release '{cur_instance_id}' isolation")
-                        else:
-                            print(f"INFO :: Sensor successfully installed on '{cur_instance_id}'")
-                            self.ec2_client.create_tags(
-                                Resources=[cur_instance_id],
-                                Tags=[
-                                    {'Key': "sensor_installed", 'Value': "True"},
-                                    {'Key': "last_edited_by", 'Value': "SensorInstallation"}
-                                ]
-                            )
-                            tags = current_windows_instance_tags[cur_instance_id]
-                            security_groups = self.get_tag_value("security_groups", tags)
-                            instance_profile = self.get_tag_value("previous_instance_profile", tags)
-                            released_isolation = self.release_isolation(cur_instance_id, security_groups,
-                                                                        instance_profile)
-
-                            if released_isolation:
-                                self.ec2_client.create_tags(
-                                    Resources=[cur_instance_id],
-                                    Tags=[
-                                        {'Key': "security_groups", 'Value': "None"},
-                                        {'Key': "previous_instance_profile", 'Value': "None"},
-                                        {'Key': "ssm_access", 'Value': "N\\A"},
-                                        {'Key': "isolated", 'Value': "False"},
-                                        {'Key': "last_edited_by", 'Value': "SensorInstallation"}
-                                    ]
-                                )
-                            else:
-                                print(f"ERROR :: Failed to release '{cur_instance_id}' from isolation")
-                                exit(1)
-                    else:
-                        print(f"INFO :: Sensor failed to install on '{cur_instance_id}'")
-
+                self.run_command_for_instances("windows", current_windows_instance_ids, current_windows_instance_tags, windows_sensor_commands)
             else:
                 print("INFO :: No Windows instances with SSM access found")
-            if len(current_linux_instance_id) > 0:
-                pass
+
+            def get_linux_command(binary):
+                return [
+                    "mkdir /home/ubuntu/tools",
+                    f"aws s3 cp s3://{self.s3_bucket_name}/{binary} /home/ubuntu/tools/",
+                    f"dpkg -i /home/ubuntu/tools/{binary}"
+                ]
+
+            if len(current_linux_instance_ids["x86_64"]) > 0:
+                sensor_binary_name = f"CybereasonSensor-x86_64-{self.current_scenario}.deb"
+                linux_sensor_commands = get_linux_command(sensor_binary_name)
+                self.run_command_for_instances("linux-amd", current_linux_instance_ids, current_windows_instance_tags, linux_sensor_commands)
             else:
-                print("INFO :: No Linux instances with SSM access found")
+                print("INFO :: No AMD based Linux instances with SSM access found")
+
+            if len(current_linux_instance_ids["arm64"]) > 0:
+                sensor_binary_name = f"CybereasonSensor-arm64-{self.current_scenario}.deb"
+                linux_sensor_commands = get_linux_command(sensor_binary_name)
+                self.run_command_for_instances("linux-arm", current_linux_instance_ids, current_windows_instance_tags,
+                                               linux_sensor_commands)
 
 
 def lambda_handler(event, context):
