@@ -69,7 +69,7 @@ resource "aws_s3_object" "this" {
 }
 resource "null_resource" "this" {
   provisioner "local-exec" {
-    command = "./script_zip_files_replace.sh > script_zip_files_replace.log"
+    command = "../script_zip_files_replace.sh > script_zip_files_replace.log"
   }
 }
 resource "random_string" "this" {
