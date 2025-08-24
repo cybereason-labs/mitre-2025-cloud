@@ -256,6 +256,8 @@ class SensorInstaller:
                 linux_sensor_commands = get_linux_command(sensor_binary_name)
                 self.run_command_for_instances("linux-arm", current_linux_instance_ids, current_windows_instance_tags,
                                                linux_sensor_commands)
+            else:
+                print("INFO :: No ARM based Linux instances with SSM access found")
 
 
 def lambda_handler(event, context):
