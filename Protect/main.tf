@@ -25,6 +25,10 @@ variable "scenario" {
   type    = string
   default = "protect"
 }
+variable "Observe" {
+  sensitive = true
+  type = object({ customer_id = string, extra = string, token = string })
+}
 
 locals {
   installation_files = [
@@ -55,6 +59,14 @@ module "sensor_installer" {
   region         = "us-east-1"
   s3_bucket_name = aws_s3_bucket.this.bucket
   scenario       = var.scenario
+}
+module "CloudTrail" {
+  source              = "../CloudTrail-to-Observe"
+  name                = "CloudTrail-to-Observe-${random_string.this.id}"
+  observe-customer-id = var.Observe["customer_id"]
+  observe-extra       = var.Observe["extra"]
+  observe-token       = var.Observe["token"]
+  random-id           = random_string.this.id
 }
 
 resource "aws_s3_bucket" "this" {
